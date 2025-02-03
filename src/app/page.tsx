@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/../lib/supabaseClient';
+import Image from 'next/image';
 
 interface Tyre {
   id: number;
@@ -100,7 +101,7 @@ export default function Home() {
   };
 
   // Filter and sort tyres
-  let filteredTyres = tyres.filter((tyre) => {
+  const filteredTyres = tyres.filter((tyre) => {
     let match = true;
     if (searchWidth) {
       match =
@@ -128,7 +129,13 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10">
       {/* Logo */}
       <div className="mb-6">
-        <img src="/logo.png" alt="Logo" className="mx-auto w-24" />
+        <Image
+          src="/logo.png"
+          alt="Logo"
+          width={96}   // adjust width as needed (e.g., 96px for w-24)
+          height={96}  // adjust height accordingly
+          className="mx-auto"
+        />
       </div>
 
       <div className="w-full max-w-2xl bg-white shadow-md rounded-lg p-8">
