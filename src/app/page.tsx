@@ -1,33 +1,41 @@
-'use client'
+'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/../lib/supabaseClient';
 import Image from 'next/image';
+import { supabase } from '@/../lib/supabaseClient';
 
 interface Tyre {
   id: number;
   tyre_width: string;
   ratio: string;
   rim: string;
+  quantity: number;
   created_at: string;
 }
 
 export default function Home() {
-  // Store tyres as objects from Supabase
+  // States for tyre inventory
   const [tyres, setTyres] = useState<Tyre[]>([]);
-  // Form states
+  
+  // Form states for adding a tyre (or multiple tyres)
   const [tyreWidth, setTyreWidth] = useState('');
   const [ratio, setRatio] = useState('');
   const [rim, setRim] = useState('');
+  const [quantity, setQuantity] = useState("1"); // New field for quantity
   const [error, setError] = useState('');
 
-  // Search states
+  // Search states for filtering the inventory
   const [searchWidth, setSearchWidth] = useState('');
   const [searchRatio, setSearchRatio] = useState('');
   const [searchRim, setSearchRim] = useState('');
+
+  // Sorting state (by tyre width)
   const [sortOrder, setSortOrder] = useState('asc');
 
-  // Fetch tyres from Supabase on component mount
+  // A state to hold removal quantity for each tyre record (keyed by tyre id)
+  const [removeQuantities, setRemoveQuantities] = useState<{ [id: number]: number }>({});
+
+  // Fetch tyres from Supabase on mount
   useEffect(() => {
     const fetchTyres = async () => {
       const { data, error } = await supabase.from('tyres').select('*');
@@ -40,12 +48,12 @@ export default function Home() {
     fetchTyres();
   }, []);
 
-  // Validation functions
+  // Validation functions:
   const validateTyreWidth = (value: string) => /^\d{3}$/.test(value);
   const validateRatio = (value: string) => /^\d{2}$/.test(value);
   const validateRim = (value: string) => /^[A-Za-z0-9]{2,3}$/.test(value);
 
-  // Add a new tyre entry to Supabase
+  // Handler to add tyres (or update quantity if tyre already exists)
   const handleAddTyre = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -62,63 +70,98 @@ export default function Home() {
       return;
     }
 
-    // Check for duplicates in the current state
-    const exists = tyres.some(
-      (tyre) =>
-        tyre.tyre_width === tyreWidth &&
-        tyre.ratio === ratio &&
-        tyre.rim === rim
-    );
-    if (exists) {
-      setError('Tyre number already exists.');
+    const quantityNumber = parseInt(quantity, 10);
+    if (isNaN(quantityNumber) || quantityNumber < 1) {
+      setError('Quantity must be at least 1.');
       return;
     }
 
-    const { data, error: insertError } = await supabase
-      .from('tyres')
-      .insert([{ tyre_width: tyreWidth, ratio: ratio, rim: rim }])
-      .select();
+    // Check if a tyre with the same specs already exists
+    const existingTyre = tyres.find(
+      tyre => tyre.tyre_width === tyreWidth && tyre.ratio === ratio && tyre.rim === rim
+    );
 
-    if (insertError) {
-      setError(insertError.message);
-    } else if (data) {
-      setTyres([...tyres, data[0]]);
+    if (existingTyre) {
+      // Update the existing record with the new quantity
+      const newQuantity = existingTyre.quantity + quantityNumber;
+      const { error: updateError } = await supabase
+        .from('tyres')
+        .update({ quantity: newQuantity })
+        .eq('id', existingTyre.id);
+
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+
+      setTyres(tyres.map(tyre => tyre.id === existingTyre.id ? { ...tyre, quantity: newQuantity } : tyre));
       setTyreWidth('');
       setRatio('');
       setRim('');
+      setQuantity("1");
       setError('');
-    }
-  };
-
-  // Remove a tyre from Supabase
-  const handleRemoveTyre = async (id: number) => {
-    const { error } = await supabase.from('tyres').delete().eq('id', id);
-    if (error) {
-      console.error('Error deleting tyre:', error);
     } else {
-      setTyres(tyres.filter((tyre) => tyre.id !== id));
+      // Insert a new tyre record
+      const { data, error: insertError } = await supabase
+        .from('tyres')
+        .insert([{ tyre_width: tyreWidth, ratio, rim, quantity: quantityNumber }])
+        .select();
+      if (insertError) {
+        setError(insertError.message);
+      } else if (data) {
+        setTyres([...tyres, data[0]]);
+        setTyreWidth('');
+        setRatio('');
+        setRim('');
+        setQuantity("1");
+        setError('');
+      }
     }
   };
 
-  // Filter and sort tyres
-  const filteredTyres = tyres.filter((tyre) => {
+  // Handler to remove a given quantity from a tyre record
+  const handleRemoveTyre = async (id: number, removeQty: number) => {
+    const tyreToRemove = tyres.find(tyre => tyre.id === id);
+    if (!tyreToRemove) return;
+
+    if (removeQty >= tyreToRemove.quantity) {
+      // Remove the entire record
+      const { error } = await supabase.from('tyres').delete().eq('id', id);
+      if (error) {
+        console.error('Error deleting tyre:', error);
+        return;
+      }
+      setTyres(tyres.filter(tyre => tyre.id !== id));
+    } else {
+      // Update the record with the reduced quantity
+      const newQuantity = tyreToRemove.quantity - removeQty;
+      const { error } = await supabase.from('tyres').update({ quantity: newQuantity }).eq('id', id);
+      if (error) {
+        console.error('Error updating tyre quantity:', error);
+        return;
+      }
+      setTyres(tyres.map(tyre => tyre.id === id ? { ...tyre, quantity: newQuantity } : tyre));
+    }
+    // Reset the removal input for this record
+    setRemoveQuantities(prev => ({ ...prev, [id]: 1 }));
+  };
+
+  // Filter tyres based on search fields
+  const filteredTyres = tyres.filter(tyre => {
     let match = true;
     if (searchWidth) {
-      match =
-        match &&
-        tyre.tyre_width.toLowerCase().includes(searchWidth.toLowerCase());
+      match = match && tyre.tyre_width.toLowerCase().includes(searchWidth.toLowerCase());
     }
     if (searchRatio) {
-      match =
-        match && tyre.ratio.toLowerCase().includes(searchRatio.toLowerCase());
+      match = match && tyre.ratio.toLowerCase().includes(searchRatio.toLowerCase());
     }
     if (searchRim) {
-      match =
-        match && tyre.rim.toLowerCase().includes(searchRim.toLowerCase());
+      match = match && tyre.rim.toLowerCase().includes(searchRim.toLowerCase());
     }
     return match;
   });
 
+  // Sort filtered tyres by tyre_width (numerically)
   filteredTyres.sort((a, b) => {
     const aNum = parseInt(a.tyre_width, 10);
     const bNum = parseInt(b.tyre_width, 10);
@@ -129,26 +172,16 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10">
       {/* Logo */}
       <div className="mb-6">
-        <Image
-          src="/logo.png"
-          alt="Logo"
-          width={96}   // adjust width as needed (e.g., 96px for w-24)
-          height={96}  // adjust height accordingly
-          className="mx-auto"
-        />
+        <Image src="/logo.png" alt="Logo" width={96} height={96} className="mx-auto" />
       </div>
 
       <div className="w-full max-w-2xl bg-white shadow-md rounded-lg p-8">
-        <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
-          Tyre Inventory
-        </h1>
+        <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">Tyre Inventory</h1>
 
-        {/* Form to add a new tyre */}
+        {/* Form to add new tyre(s) */}
         <form onSubmit={handleAddTyre} className="space-y-4">
           <div className="flex flex-col">
-            <label htmlFor="tyreWidth" className="mb-1 font-medium text-gray-800">
-              Tyre Width:
-            </label>
+            <label htmlFor="tyreWidth" className="mb-1 font-medium text-gray-800">Tyre Width:</label>
             <input
               id="tyreWidth"
               type="text"
@@ -162,9 +195,7 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col">
-            <label htmlFor="ratio" className="mb-1 font-medium text-gray-800">
-              Ratio:
-            </label>
+            <label htmlFor="ratio" className="mb-1 font-medium text-gray-800">Ratio:</label>
             <input
               id="ratio"
               type="text"
@@ -178,9 +209,7 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col">
-            <label htmlFor="rim" className="mb-1 font-medium text-gray-800">
-              Rim (C for commercial):
-            </label>
+            <label htmlFor="rim" className="mb-1 font-medium text-gray-800">Rim (C for commercial):</label>
             <input
               id="rim"
               type="text"
@@ -193,22 +222,34 @@ export default function Home() {
             />
           </div>
 
+          {/* New input for quantity */}
+          <div className="flex flex-col">
+            <label htmlFor="quantity" className="mb-1 font-medium text-gray-800">Quantity to Add:</label>
+            <input
+              id="quantity"
+              type="number"
+              value={quantity}
+              min="1"
+              onChange={(e) => setQuantity(e.target.value)}
+              required
+              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+            />
+          </div>
+
           {error && <p className="text-red-600">{error}</p>}
 
           <button
             type="submit"
             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded transition-colors"
           >
-            Add Tyre
+            Add Tyre(s)
           </button>
         </form>
 
         {/* Search fields */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label htmlFor="searchWidth" className="block mb-2 font-medium text-gray-800">
-              Search Tyre Width:
-            </label>
+            <label htmlFor="searchWidth" className="block mb-2 font-medium text-gray-800">Search Tyre Width:</label>
             <input
               id="searchWidth"
               type="text"
@@ -219,9 +260,7 @@ export default function Home() {
             />
           </div>
           <div>
-            <label htmlFor="searchRatio" className="block mb-2 font-medium text-gray-800">
-              Search Ratio:
-            </label>
+            <label htmlFor="searchRatio" className="block mb-2 font-medium text-gray-800">Search Ratio:</label>
             <input
               id="searchRatio"
               type="text"
@@ -232,9 +271,7 @@ export default function Home() {
             />
           </div>
           <div>
-            <label htmlFor="searchRim" className="block mb-2 font-medium text-gray-800">
-              Search Rim:
-            </label>
+            <label htmlFor="searchRim" className="block mb-2 font-medium text-gray-800">Search Rim:</label>
             <input
               id="searchRim"
               type="text"
@@ -246,11 +283,9 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Sorting */}
+        {/* Sorting dropdown */}
         <div className="mt-6 flex items-center">
-          <label htmlFor="sortOrder" className="mr-4 font-medium text-gray-800">
-            Sort by Tyre Width:
-          </label>
+          <label htmlFor="sortOrder" className="mr-4 font-medium text-gray-800">Sort by Tyre Width:</label>
           <select
             id="sortOrder"
             value={sortOrder}
@@ -263,25 +298,40 @@ export default function Home() {
         </div>
 
         {/* Inventory List */}
-        <h2 className="text-2xl font-semibold mt-8 mb-4 text-gray-800">
-          Inventory
-        </h2>
+        <h2 className="text-2xl font-semibold mt-8 mb-4 text-gray-800">Inventory</h2>
         {filteredTyres.length > 0 ? (
           <ul className="space-y-3">
             {filteredTyres.map((tyre) => (
               <li
                 key={tyre.id}
-                className="flex items-center justify-between border border-gray-200 rounded px-4 py-2"
+                className="flex flex-col border border-gray-200 rounded px-4 py-2"
               >
-                <span className="text-gray-800">
-                  {tyre.tyre_width}/{tyre.ratio}/{tyre.rim}
-                </span>
-                <button
-                  onClick={() => handleRemoveTyre(tyre.id)}
-                  className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-3 py-1 rounded transition-colors"
-                >
-                  Remove
-                </button>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-800">
+                    {tyre.tyre_width}/{tyre.ratio}/{tyre.rim}
+                  </span>
+                  <span className="text-gray-800 font-medium">Quantity: {tyre.quantity}</span>
+                </div>
+                <div className="mt-2 flex items-center space-x-2">
+                  <input
+                    type="number"
+                    min="1"
+                    value={removeQuantities[tyre.id] || 1}
+                    onChange={(e) =>
+                      setRemoveQuantities(prev => ({
+                        ...prev,
+                        [tyre.id]: parseInt(e.target.value, 10) || 1
+                      }))
+                    }
+                    className="w-20 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+                  />
+                  <button
+                    onClick={() => handleRemoveTyre(tyre.id, removeQuantities[tyre.id] || 1)}
+                    className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-3 py-1 rounded transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
