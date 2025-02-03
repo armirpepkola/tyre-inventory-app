@@ -9,33 +9,35 @@ interface Tyre {
   tyre_width: string;
   ratio: string;
   rim: string;
+  section: string;
   quantity: number;
   created_at: string;
 }
 
 export default function Home() {
-  // States for tyre inventory
+  // Inventory state
   const [tyres, setTyres] = useState<Tyre[]>([]);
   
-  // Form states for adding a tyre (or multiple tyres)
+  // Form states for adding a tyre
   const [tyreWidth, setTyreWidth] = useState('');
   const [ratio, setRatio] = useState('');
   const [rim, setRim] = useState('');
-  const [quantity, setQuantity] = useState("1"); // New field for quantity
+  const [section, setSection] = useState('');
+  const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState('');
 
-  // Search states for filtering the inventory
+  // Search states
   const [searchWidth, setSearchWidth] = useState('');
   const [searchRatio, setSearchRatio] = useState('');
   const [searchRim, setSearchRim] = useState('');
+  const [searchSection, setSearchSection] = useState('');
 
-  // Sorting state (by tyre width)
+  // Sorting state
   const [sortOrder, setSortOrder] = useState('asc');
 
-  // A state to hold removal quantity for each tyre record (keyed by tyre id)
+  // Removal quantity state per tyre id
   const [removeQuantities, setRemoveQuantities] = useState<{ [id: number]: number }>({});
 
-  // Fetch tyres from Supabase on mount
   useEffect(() => {
     const fetchTyres = async () => {
       const { data, error } = await supabase.from('tyres').select('*');
@@ -48,15 +50,17 @@ export default function Home() {
     fetchTyres();
   }, []);
 
-  // Validation functions:
+  // Validation functions
   const validateTyreWidth = (value: string) => /^\d{3}$/.test(value);
   const validateRatio = (value: string) => /^\d{2}$/.test(value);
   const validateRim = (value: string) => /^[A-Za-z0-9]{2,3}$/.test(value);
+  // Validate that section is one letter followed by one digit (e.g., "A1")
+  const validateSection = (value: string) => /^[A-Za-z]\d$/.test(value);
 
-  // Handler to add tyres (or update quantity if tyre already exists)
   const handleAddTyre = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Validate all inputs
     if (!validateTyreWidth(tyreWidth)) {
       setError('Tyre Width must be exactly 3 digits.');
       return;
@@ -69,63 +73,68 @@ export default function Home() {
       setError('Rim must be 2 to 3 alphanumeric characters.');
       return;
     }
-
+    if (!validateSection(section)) {
+      setError('Section must be one letter followed by one number (e.g., A1).');
+      return;
+    }
+    
     const quantityNumber = parseInt(quantity, 10);
     if (isNaN(quantityNumber) || quantityNumber < 1) {
       setError('Quantity must be at least 1.');
       return;
     }
 
-    // Check if a tyre with the same specs already exists
+    // Check if a tyre with the same specs (including section) exists
     const existingTyre = tyres.find(
-      tyre => tyre.tyre_width === tyreWidth && tyre.ratio === ratio && tyre.rim === rim
+      tyre =>
+        tyre.tyre_width === tyreWidth &&
+        tyre.ratio === ratio &&
+        tyre.rim === rim &&
+        tyre.section.toUpperCase() === section.toUpperCase()
     );
 
     if (existingTyre) {
-      // Update the existing record with the new quantity
       const newQuantity = existingTyre.quantity + quantityNumber;
       const { error: updateError } = await supabase
         .from('tyres')
         .update({ quantity: newQuantity })
         .eq('id', existingTyre.id);
-
       if (updateError) {
         setError(updateError.message);
         return;
       }
-
       setTyres(tyres.map(tyre => tyre.id === existingTyre.id ? { ...tyre, quantity: newQuantity } : tyre));
-      setTyreWidth('');
-      setRatio('');
-      setRim('');
-      setQuantity("1");
-      setError('');
     } else {
       // Insert a new tyre record
       const { data, error: insertError } = await supabase
         .from('tyres')
-        .insert([{ tyre_width: tyreWidth, ratio, rim, quantity: quantityNumber }])
+        .insert([
+          { tyre_width: tyreWidth, ratio, rim, section: section.toUpperCase(), quantity: quantityNumber }
+        ])
         .select();
       if (insertError) {
         setError(insertError.message);
-      } else if (data) {
+        return;
+      }
+      if (data) {
         setTyres([...tyres, data[0]]);
-        setTyreWidth('');
-        setRatio('');
-        setRim('');
-        setQuantity("1");
-        setError('');
       }
     }
+    // Reset form fields
+    setTyreWidth('');
+    setRatio('');
+    setRim('');
+    setSection('');
+    setQuantity("1");
+    setError('');
   };
 
-  // Handler to remove a given quantity from a tyre record
   const handleRemoveTyre = async (id: number, removeQty: number) => {
     const tyreToRemove = tyres.find(tyre => tyre.id === id);
     if (!tyreToRemove) return;
 
     if (removeQty >= tyreToRemove.quantity) {
-      // Remove the entire record
+      // Delete the record if removal quantity is equal or exceeds current quantity
       const { error } = await supabase.from('tyres').delete().eq('id', id);
       if (error) {
         console.error('Error deleting tyre:', error);
@@ -142,11 +151,10 @@ export default function Home() {
       }
       setTyres(tyres.map(tyre => tyre.id === id ? { ...tyre, quantity: newQuantity } : tyre));
     }
-    // Reset the removal input for this record
     setRemoveQuantities(prev => ({ ...prev, [id]: 1 }));
   };
 
-  // Filter tyres based on search fields
+  // Filter tyres based on search criteria
   const filteredTyres = tyres.filter(tyre => {
     let match = true;
     if (searchWidth) {
@@ -158,10 +166,13 @@ export default function Home() {
     if (searchRim) {
       match = match && tyre.rim.toLowerCase().includes(searchRim.toLowerCase());
     }
+    if (searchSection) {
+      match = match && tyre.section.toLowerCase().includes(searchSection.toLowerCase());
+    }
     return match;
   });
 
-  // Sort filtered tyres by tyre_width (numerically)
+  // Sort filtered tyres by tyre_width numerically
   filteredTyres.sort((a, b) => {
     const aNum = parseInt(a.tyre_width, 10);
     const bNum = parseInt(b.tyre_width, 10);
@@ -222,7 +233,22 @@ export default function Home() {
             />
           </div>
 
-          {/* New input for quantity */}
+          {/* New input for Section */}
+          <div className="flex flex-col">
+            <label htmlFor="section" className="mb-1 font-medium text-gray-800">Section (e.g., A1):</label>
+            <input
+              id="section"
+              type="text"
+              value={section}
+              maxLength={2}
+              onChange={(e) => setSection(e.target.value)}
+              required
+              placeholder="e.g., A1"
+              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+            />
+          </div>
+
+          {/* Input for Quantity */}
           <div className="flex flex-col">
             <label htmlFor="quantity" className="mb-1 font-medium text-gray-800">Quantity to Add:</label>
             <input
@@ -247,9 +273,9 @@ export default function Home() {
         </form>
 
         {/* Search fields */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label htmlFor="searchWidth" className="block mb-2 font-medium text-gray-800">Search Tyre Width:</label>
+            <label htmlFor="searchWidth" className="block mb-2 font-medium text-gray-800">Search Width:</label>
             <input
               id="searchWidth"
               type="text"
@@ -281,11 +307,22 @@ export default function Home() {
               className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
             />
           </div>
+          <div>
+            <label htmlFor="searchSection" className="block mb-2 font-medium text-gray-800">Search Section:</label>
+            <input
+              id="searchSection"
+              type="text"
+              value={searchSection}
+              onChange={(e) => setSearchSection(e.target.value)}
+              placeholder="e.g., A1"
+              className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+            />
+          </div>
         </div>
 
         {/* Sorting dropdown */}
         <div className="mt-6 flex items-center">
-          <label htmlFor="sortOrder" className="mr-4 font-medium text-gray-800">Sort by Tyre Width:</label>
+          <label htmlFor="sortOrder" className="mr-4 font-medium text-gray-800">Sort by Width:</label>
           <select
             id="sortOrder"
             value={sortOrder}
@@ -300,19 +337,17 @@ export default function Home() {
         {/* Inventory List */}
         <h2 className="text-2xl font-semibold mt-8 mb-4 text-gray-800">Inventory</h2>
         {filteredTyres.length > 0 ? (
-          <ul className="space-y-3">
+          <div className="space-y-2">
             {filteredTyres.map((tyre) => (
-              <li
-                key={tyre.id}
-                className="flex flex-col border border-gray-200 rounded px-4 py-2"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-800">
+              <div key={tyre.id} className="flex items-center justify-between p-3 bg-gray-100 rounded shadow">
+                <div className="flex items-center space-x-4">
+                  <span className="font-medium text-gray-800">
                     {tyre.tyre_width}/{tyre.ratio}/{tyre.rim}
                   </span>
-                  <span className="text-gray-800 font-medium">Quantity: {tyre.quantity}</span>
+                  <span className="text-gray-600">Section: {tyre.section}</span>
+                  <span className="text-gray-800">Qty: {tyre.quantity}</span>
                 </div>
-                <div className="mt-2 flex items-center space-x-2">
+                <div className="flex items-center space-x-2">
                   <input
                     type="number"
                     min="1"
@@ -323,18 +358,18 @@ export default function Home() {
                         [tyre.id]: parseInt(e.target.value, 10) || 1
                       }))
                     }
-                    className="w-20 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+                    className="w-16 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
                   />
                   <button
                     onClick={() => handleRemoveTyre(tyre.id, removeQuantities[tyre.id] || 1)}
-                    className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-3 py-1 rounded transition-colors"
+                    className="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600 focus:outline-none"
                   >
                     Remove
                   </button>
                 </div>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
           <p className="text-gray-800">No tyres found.</p>
         )}
