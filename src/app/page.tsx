@@ -15,10 +15,15 @@ interface Tyre {
 }
 
 export default function Home() {
-  // Inventory state
+  // --- Authorization State ---
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const expectedPasscode = process.env.NEXT_PUBLIC_INVENTORY_PASSCODE || '';
+
+  // --- Inventory & Form State ---
   const [tyres, setTyres] = useState<Tyre[]>([]);
   
-  // Form states for adding a tyre
+  // Form fields for adding a tyre
   const [tyreWidth, setTyreWidth] = useState('');
   const [ratio, setRatio] = useState('');
   const [rim, setRim] = useState('');
@@ -26,18 +31,17 @@ export default function Home() {
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState('');
 
-  // Search states
+  // Search and sort state
   const [searchWidth, setSearchWidth] = useState('');
   const [searchRatio, setSearchRatio] = useState('');
   const [searchRim, setSearchRim] = useState('');
   const [searchSection, setSearchSection] = useState('');
-
-  // Sorting state
   const [sortOrder, setSortOrder] = useState('asc');
 
   // Removal quantity state per tyre id
   const [removeQuantities, setRemoveQuantities] = useState<{ [id: number]: number }>({});
 
+  // --- Fetch Tyres from Supabase ---
   useEffect(() => {
     const fetchTyres = async () => {
       const { data, error } = await supabase.from('tyres').select('*');
@@ -50,17 +54,30 @@ export default function Home() {
     fetchTyres();
   }, []);
 
-  // Validation functions
+  // --- Validation Functions ---
   const validateTyreWidth = (value: string) => /^\d{3}$/.test(value);
   const validateRatio = (value: string) => /^\d{2}$/.test(value);
   const validateRim = (value: string) => /^[A-Za-z0-9]{2,3}$/.test(value);
-  // Validate that section is one letter followed by one digit (e.g., "A1")
+  // Section must be one letter followed by one digit (e.g., "A1")
   const validateSection = (value: string) => /^[A-Za-z]\d$/.test(value);
 
+  // --- Passcode Unlock Handler ---
+  const handleUnlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passcodeInput === expectedPasscode) {
+      setIsAuthorized(true);
+      setPasscodeInput('');
+      setError('');
+    } else {
+      setError('Incorrect passcode.');
+    }
+  };
+
+  // --- Add Tyre Handler ---
   const handleAddTyre = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate all inputs
+    // Validate inputs
     if (!validateTyreWidth(tyreWidth)) {
       setError('Tyre Width must be exactly 3 digits.');
       return;
@@ -84,7 +101,7 @@ export default function Home() {
       return;
     }
 
-    // Check if a tyre with the same specs (including section) exists
+    // Check for an existing tyre record with the same specs and section
     const existingTyre = tyres.find(
       tyre =>
         tyre.tyre_width === tyreWidth &&
@@ -105,7 +122,6 @@ export default function Home() {
       }
       setTyres(tyres.map(tyre => tyre.id === existingTyre.id ? { ...tyre, quantity: newQuantity } : tyre));
     } else {
-      // Insert a new tyre record
       const { data, error: insertError } = await supabase
         .from('tyres')
         .insert([
@@ -129,12 +145,12 @@ export default function Home() {
     setError('');
   };
 
+  // --- Remove Tyre Handler ---
   const handleRemoveTyre = async (id: number, removeQty: number) => {
     const tyreToRemove = tyres.find(tyre => tyre.id === id);
     if (!tyreToRemove) return;
 
     if (removeQty >= tyreToRemove.quantity) {
-      // Delete the record if removal quantity is equal or exceeds current quantity
       const { error } = await supabase.from('tyres').delete().eq('id', id);
       if (error) {
         console.error('Error deleting tyre:', error);
@@ -142,7 +158,6 @@ export default function Home() {
       }
       setTyres(tyres.filter(tyre => tyre.id !== id));
     } else {
-      // Update the record with the reduced quantity
       const newQuantity = tyreToRemove.quantity - removeQty;
       const { error } = await supabase.from('tyres').update({ quantity: newQuantity }).eq('id', id);
       if (error) {
@@ -154,7 +169,7 @@ export default function Home() {
     setRemoveQuantities(prev => ({ ...prev, [id]: 1 }));
   };
 
-  // Filter tyres based on search criteria
+  // --- Filtering and Sorting ---
   const filteredTyres = tyres.filter(tyre => {
     let match = true;
     if (searchWidth) {
@@ -172,7 +187,6 @@ export default function Home() {
     return match;
   });
 
-  // Sort filtered tyres by tyre_width numerically
   filteredTyres.sort((a, b) => {
     const aNum = parseInt(a.tyre_width, 10);
     const bNum = parseInt(b.tyre_width, 10);
@@ -188,92 +202,117 @@ export default function Home() {
 
       <div className="w-full max-w-2xl bg-white shadow-md rounded-lg p-8">
         <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">Tyre Inventory</h1>
+        
+        {/* --- Passcode Unlock Form --- */}
+        {!isAuthorized && (
+          <form onSubmit={handleUnlock} className="mb-4">
+            <label className="block mb-1 text-gray-800">
+              Enter Passcode to Edit Inventory:
+            </label>
+            <div className="flex space-x-2">
+              <input
+                type="password"
+                value={passcodeInput}
+                onChange={(e) => setPasscodeInput(e.target.value)}
+                placeholder="Passcode"
+                className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+              />
+              <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded">
+                Unlock
+              </button>
+            </div>
+          </form>
+        )}
 
-        {/* Form to add new tyre(s) */}
-        <form onSubmit={handleAddTyre} className="space-y-4">
-          <div className="flex flex-col">
-            <label htmlFor="tyreWidth" className="mb-1 font-medium text-gray-800">Tyre Width:</label>
-            <input
-              id="tyreWidth"
-              type="text"
-              value={tyreWidth}
-              maxLength={3}
-              onChange={(e) => setTyreWidth(e.target.value)}
-              required
-              placeholder="e.g., 205"
-              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-            />
-          </div>
+        {error && <p className="text-red-600 mb-4">{error}</p>}
 
-          <div className="flex flex-col">
-            <label htmlFor="ratio" className="mb-1 font-medium text-gray-800">Ratio:</label>
-            <input
-              id="ratio"
-              type="text"
-              value={ratio}
-              maxLength={2}
-              onChange={(e) => setRatio(e.target.value)}
-              required
-              placeholder="e.g., 55"
-              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-            />
-          </div>
+        {/* --- Add Form (visible only when unlocked) --- */}
+        {isAuthorized ? (
+          <form onSubmit={handleAddTyre} className="space-y-4 mb-6">
+            <div className="flex flex-col">
+              <label htmlFor="tyreWidth" className="mb-1 font-medium text-gray-800">Tyre Width:</label>
+              <input
+                id="tyreWidth"
+                type="text"
+                value={tyreWidth}
+                maxLength={3}
+                onChange={(e) => setTyreWidth(e.target.value)}
+                required
+                placeholder="e.g., 205"
+                className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+              />
+            </div>
 
-          <div className="flex flex-col">
-            <label htmlFor="rim" className="mb-1 font-medium text-gray-800">Rim (C for commercial):</label>
-            <input
-              id="rim"
-              type="text"
-              value={rim}
-              maxLength={3}
-              onChange={(e) => setRim(e.target.value)}
-              required
-              placeholder="e.g., 17C"
-              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-            />
-          </div>
+            <div className="flex flex-col">
+              <label htmlFor="ratio" className="mb-1 font-medium text-gray-800">Ratio:</label>
+              <input
+                id="ratio"
+                type="text"
+                value={ratio}
+                maxLength={2}
+                onChange={(e) => setRatio(e.target.value)}
+                required
+                placeholder="e.g., 55"
+                className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+              />
+            </div>
 
-          {/* New input for Section */}
-          <div className="flex flex-col">
-            <label htmlFor="section" className="mb-1 font-medium text-gray-800">Section (e.g., A1):</label>
-            <input
-              id="section"
-              type="text"
-              value={section}
-              maxLength={2}
-              onChange={(e) => setSection(e.target.value)}
-              required
-              placeholder="e.g., A1"
-              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-            />
-          </div>
+            <div className="flex flex-col">
+              <label htmlFor="rim" className="mb-1 font-medium text-gray-800">Rim (C for commercial):</label>
+              <input
+                id="rim"
+                type="text"
+                value={rim}
+                maxLength={3}
+                onChange={(e) => setRim(e.target.value)}
+                required
+                placeholder="e.g., 17C"
+                className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+              />
+            </div>
 
-          {/* Input for Quantity */}
-          <div className="flex flex-col">
-            <label htmlFor="quantity" className="mb-1 font-medium text-gray-800">Quantity to Add:</label>
-            <input
-              id="quantity"
-              type="number"
-              value={quantity}
-              min="1"
-              onChange={(e) => setQuantity(e.target.value)}
-              required
-              className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-            />
-          </div>
+            <div className="flex flex-col">
+              <label htmlFor="section" className="mb-1 font-medium text-gray-800">Section (e.g., A1):</label>
+              <input
+                id="section"
+                type="text"
+                value={section}
+                maxLength={2}
+                onChange={(e) => setSection(e.target.value)}
+                required
+                placeholder="e.g., A1"
+                className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+              />
+            </div>
 
-          {error && <p className="text-red-600">{error}</p>}
+            <div className="flex flex-col">
+              <label htmlFor="quantity" className="mb-1 font-medium text-gray-800">Quantity to Add:</label>
+              <input
+                id="quantity"
+                type="number"
+                value={quantity}
+                min="1"
+                onChange={(e) => setQuantity(e.target.value)}
+                required
+                className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+              />
+            </div>
 
-          <button
-            type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded transition-colors"
-          >
-            Add Tyre(s)
-          </button>
-        </form>
+            <button
+              type="submit"
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded transition-colors"
+            >
+              Add Tyre(s)
+            </button>
+          </form>
+        ) : (
+          <p className="text-gray-600 mb-6">
+            Inventory editing is locked. Enter the passcode above to unlock editing features.
+          </p>
+        )}
 
-        {/* Search fields */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* --- Search Fields --- */}
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div>
             <label htmlFor="searchWidth" className="block mb-2 font-medium text-gray-800">Search Width:</label>
             <input
@@ -320,8 +359,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Sorting dropdown */}
-        <div className="mt-6 flex items-center">
+        {/* --- Sorting Dropdown --- */}
+        <div className="mt-6 flex items-center mb-6">
           <label htmlFor="sortOrder" className="mr-4 font-medium text-gray-800">Sort by Width:</label>
           <select
             id="sortOrder"
@@ -334,8 +373,8 @@ export default function Home() {
           </select>
         </div>
 
-        {/* Inventory List */}
-        <h2 className="text-2xl font-semibold mt-8 mb-4 text-gray-800">Inventory</h2>
+        {/* --- Inventory List --- */}
+        <h2 className="text-2xl font-semibold mb-4 text-gray-800">Inventory</h2>
         {filteredTyres.length > 0 ? (
           <div className="space-y-2">
             {filteredTyres.map((tyre) => (
@@ -348,24 +387,30 @@ export default function Home() {
                   <span className="text-gray-800">Qty: {tyre.quantity}</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <input
-                    type="number"
-                    min="1"
-                    value={removeQuantities[tyre.id] || 1}
-                    onChange={(e) =>
-                      setRemoveQuantities(prev => ({
-                        ...prev,
-                        [tyre.id]: parseInt(e.target.value, 10) || 1
-                      }))
-                    }
-                    className="w-16 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
-                  />
-                  <button
-                    onClick={() => handleRemoveTyre(tyre.id, removeQuantities[tyre.id] || 1)}
-                    className="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600 focus:outline-none"
-                  >
-                    Remove
-                  </button>
+                  {isAuthorized ? (
+                    <>
+                      <input
+                        type="number"
+                        min="1"
+                        value={removeQuantities[tyre.id] || 1}
+                        onChange={(e) =>
+                          setRemoveQuantities(prev => ({
+                            ...prev,
+                            [tyre.id]: parseInt(e.target.value, 10) || 1
+                          }))
+                        }
+                        className="w-16 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-600 text-gray-900"
+                      />
+                      <button
+                        onClick={() => handleRemoveTyre(tyre.id, removeQuantities[tyre.id] || 1)}
+                        className="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600 focus:outline-none"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-gray-500 italic">Locked</span>
+                  )}
                 </div>
               </div>
             ))}
